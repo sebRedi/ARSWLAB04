@@ -255,4 +255,92 @@ Ajuste el código para suprimir las condiciones de carrera. Tengan en cuenta que
 
 Escriba su análisis y la solución aplicada en el archivo ANALISIS_CONCURRENCIA.txt
 
+**Respuesta:**
 
+Tras aplicar los cambios necesarios, la clase ***InMemoryBlueprintPersistence.java*** queda de la forma:
+   ``` java
+   @Repository
+   public class InMemoryBlueprintPersistence implements BlueprintsPersistence {
+   
+       private final ConcurrentMap<Tuple<String, String>, Blueprint> blueprints = new ConcurrentHashMap<>();
+   
+       public InMemoryBlueprintPersistence() {
+           Point[] pts = new Point[]{new Point(140, 140), new Point(115, 115)};
+           Blueprint bp = new Blueprint("_authorname_", "_bpname_", pts);
+           blueprints.put(new Tuple<>(bp.getAuthor(), bp.getName()), bp);
+   
+           Point[] pts2 = new Point[]{new Point(10, 10), new Point(20, 20), new Point(30, 30)};
+           Blueprint bp2 = new Blueprint("Sebastian", "Plano1", pts2);
+           blueprints.put(new Tuple<>(bp2.getAuthor(), bp2.getName()), bp2);
+   
+           Point[] pts3 = new Point[]{new Point(5, 5), new Point(15, 15)};
+           Blueprint bp3 = new Blueprint("Sebastian", "Plano2", pts3);
+           blueprints.put(new Tuple<>(bp3.getAuthor(), bp3.getName()), bp3);
+   
+           Point[] pts4 = new Point[]{new Point(100, 50), new Point(120, 80), new Point(140, 100)};
+           Blueprint bp4 = new Blueprint("Vegueta", "Plano3", pts4);
+           blueprints.put(new Tuple<>(bp4.getAuthor(), bp4.getName()), bp4);
+       }
+   
+       @Override
+       public void saveBlueprint(Blueprint bp) throws BlueprintPersistenceException {
+           Tuple<String, String> key = new Tuple<>(bp.getAuthor(), bp.getName());
+           // operación atómica: si ya existe, no lo reemplaza
+           if (blueprints.putIfAbsent(key, bp) != null) {
+               throw new BlueprintPersistenceException("The given blueprint already exists: " + bp);
+           }
+       }
+   
+       @Override
+       public Blueprint getBlueprint(String author, String bprintname) throws BlueprintNotFoundException {
+           Blueprint bp = blueprints.get(new Tuple<>(author, bprintname));
+           if (bp == null) {
+               throw new BlueprintNotFoundException("Blueprint not found: " + author + " - " + bprintname);
+           }
+           return bp;
+       }
+   
+       @Override
+       public Set<Blueprint> getAllBlueprints() {
+           return new HashSet<>(blueprints.values());
+       }
+   
+       @Override
+       public Set<Blueprint> getBlueprintsByAuthor(String author) throws BlueprintNotFoundException {
+           Set<Blueprint> result = blueprints.entrySet().stream()
+                   .filter(e -> author.equals(e.getKey().getElem1()))
+                   .map(java.util.Map.Entry::getValue)
+                   .collect(Collectors.toSet());
+   
+           if (result.isEmpty()) {
+               throw new BlueprintNotFoundException("No blueprints found for the specified author: " + author);
+           }
+           return result;
+       }
+   
+       public void updateBlueprint(String author, String name, Blueprint newBp) throws BlueprintNotFoundException {
+           Tuple<String, String> key = new Tuple<>(author, name);
+   
+           Blueprint updated = blueprints.computeIfPresent(key, (k, oldBp) -> newBp);
+   
+           if (updated == null) {
+               throw new BlueprintNotFoundException("Cannot update. Blueprint not found: " + author + " - " + name);
+           }
+       }
+   }
+   ```
+En la raíz del proyecto, se encuentra el archivo [ANALISIS_CONCURRENCIA.TXT](ANALISIS_CONCURRENCIA.txt) como se solicita.
+
+
+## Conclusión:
+La implementación de la API BlueprintsRESTAPI permitió poner en práctica conceptos fundamentales de desarrollo con Spring Boot, manejo de RESTful services, y persistencia en memoria. A lo largo del proceso se añadieron las operaciones básicas sobre el recurso blueprints siguiendo las convenciones HTTP:
+
+* GET: consulta de todos los planos, de los planos por autor y de un plano específico. 
+* POST: creación de nuevos planos. 
+* PUT: actualización de planos existentes.
+
+Adicionalmente, se gestionaron correctamente las excepciones (BlueprintNotFoundException, BlueprintPersistenceException) para garantizar respuestas con códigos de estado HTTP apropiados, fortaleciendo la robustez de la API.
+
+Un aspecto clave fue el análisis de concurrencia, ya que el servicio debe atender múltiples peticiones simultáneas. Se identificaron posibles condiciones de carrera en la estructura de persistencia y se resolvieron mediante el uso de ConcurrentHashMap y operaciones atómicas (putIfAbsent, computeIfPresent). Esto permitió mantener la integridad de los datos sin sacrificar rendimiento, evitando la degradación que supondría la sincronización global.
+
+En conclusión, el desarrollo consolidó el entendimiento de la arquitectura de servicios web con Spring, el manejo de operaciones CRUD bajo REST, la importancia de las respuestas consistentes frente a excepciones, y el diseño seguro frente a la concurrencia. El resultado es una API funcional, extensible y preparada para entornos concurrentes, constituyendo una base sólida para su futura integración con clientes externos o almacenamiento persistente más avanzado.

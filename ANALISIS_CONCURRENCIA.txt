@@ -1,0 +1,51 @@
+ANALISIS DE CONCURRENCIA Y SOLUCIÓN IMPLEMENTADA
+
+## Resumen del problema
+
+El repositorio en memoria original usa un HashMap compartido y devuelve referencias directas a objetos mutables (Blueprint con arreglos de Point). En un servidor web multihilo esto puede provocar:
+
+* Condiciones de carrera en inserciones concurrentes (POST) — dos hilos pueden intentar crear el mismo blueprint al mismo tiempo.
+* Condiciones de carrera en actualizaciones (PUT) — actualizaciones concurrentes pueden sobrescribir cambios sin control.
+* Lecturas inconsistentes durante escrituras (GET mientras se escribe).
+* Exposición de estructura interna mutable (devuelve la misma instancia de Blueprint, permitiendo que el cliente/modulo altere el estado compartido sin sincronización).
+
+## Objetivo
+
+Suprimir condiciones de carrera sin aplicar una sincronización brutal (p. ej. sincronizar toda la tabla) que degrade el rendimiento. Se buscaron alternativas basadas en concurrencia de java.util.concurrent, operaciones atómicas y copias defensivas.
+
+## Estrategia aplicada
+
+1. Sustituir HashMap por ConcurrentHashMap para permitir lecturas rápidas y escrituras concurrentes sin bloqueo global.
+
+2. Usar operaciones atómicas de ConcurrentHashMap para las escrituras críticas:
+
+   * saveBlueprint -> putIfAbsent para insertar si NO existe (operación atómica). Si retorna no nulo, el blueprint ya existía y se lanza excepción.
+   * updateBlueprint -> replace o computeIfPresent para reemplazar la entrada completa atómicamente.
+
+3. Evitar mutar objetos almacenados en el mapa. En vez de modificar internamente un Blueprint existente, reemplazamos la instancia completa por una nueva. Esto previene inconsistencias entre lectores y escritores.
+
+4. Copias defensivas en getters (devolvemos nuevas instancias/colecciones):
+
+   * getBlueprint devuelve una nueva instancia de Blueprint con copia de su arreglo de Points.
+   * getAllBlueprints y getBlueprintsByAuthor devuelven Sets nuevos y cada Blueprint es también una copia, evitando que el consumidor modifique objetos compartidos.
+
+5. Per-key locking ligero (opcional):
+
+   * Para operaciones compuestas que puedan necesitar varios pasos atómicos sobre la misma clave, se puede usar un *striped* locking (mapa de locks por clave) para sincronizar solo las operaciones sobre la misma clave. En esta implementación preferimos operaciones atómicas (putIfAbsent, replace, computeIfPresent) que hacen innecesario el locking por clave en la mayoría de casos.
+
+6. Contrato de excepciones y comportamiento:
+
+   * saveBlueprint lanza BlueprintPersistenceException si la clave ya existe (comportamiento atómico y determinista).
+   * updateBlueprint lanza BlueprintNotFoundException si la clave no existe.
+
+## Beneficios
+
+* Alta concurrencia: ConcurrentHashMap permite múltiples lectores y cierto nivel de escritura concurrente sin bloqueo global.
+* Operaciones atómicas evitan condiciones de carrera típicas sin degradar mucho el rendimiento.
+* Copias defensivas evitan que lectores muten el estado compartido.
+
+## Notas finales
+
+* Esta solución evita bloqueo global y ofrece buena concurrencia gracias a ConcurrentHashMap y a operaciones atómicas.
+* Si se requirieran operaciones transaccionales complejas (varias claves a la vez), entonces habría que diseñar un esquema de locks por clave (striped locks) o usar una base de datos externa con soporte transaccional.
+
